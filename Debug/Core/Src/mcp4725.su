@@ -1,0 +1,3 @@
+../Core/Src/mcp4725.c:11:9:MCP4725_init	32	static
+../Core/Src/mcp4725.c:21:6:MCP4725_Set_Voltage	32	static
+../Core/Src/mcp4725.c:43:6:MCP4725_Set_Voltage_EEPROM	32	static
