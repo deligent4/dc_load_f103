@@ -25,4 +25,9 @@ SUBDIRS := \
 Core/Src \
 Core/Startup \
 Drivers/STM32F1xx_HAL_Driver/Src \
+ltc2944 \
+ltc4151 \
+mcp4725 \
+pid \
+ssd1306_oled_lib/src \
 

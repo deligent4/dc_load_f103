@@ -26,13 +26,14 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "ssd1306.h"
-#include "ssd1306_tests.h"
 #include <stdbool.h>
 #include <stdio.h>
-#include "ltc4151.h"
-#include "mcp4725.h"
-#include "PID.h"
+#include "../../ssd1306_oled_lib/inc/ssd1306.h"
+#include "../../ssd1306_oled_lib/inc/ssd1306_tests.h"
+#include "../../ltc2944/ltc2944.h"
+#include "../../ltc4151/ltc4151.h"
+#include "../../mcp4725/mcp4725.h"
+#include "../../pid/pid.h"
 
 /* USER CODE END Includes */
 
@@ -43,8 +44,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define A0		0		//LTC4151 A0 Pin HIGH->1, LOW->0
-#define A1		0		//LTC4151 A1 Pin HIGH->1, LOW->0
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,7 +56,7 @@
 
 /* USER CODE BEGIN PV */
 uint32_t tick, prev_tick = 0;
-uint16_t blink_delay = 500;
+uint16_t blink_delay = 50;
 char stringValue[8];  // Adjust the buffer size as needed
 
 LTC4151_t LTC4151;
@@ -68,6 +68,64 @@ uint32_t desired_value, measured_value = 0;
 float control_signal, prev_control_signal, control_signal_slew;
 MCP4725 myMCP4725;
 uint16_t next_voltage;
+
+ltc2944_configuration_t ltc2944_struct = {0};
+extern ltc2944_data_t ltc2944_data;
+uint16_t sec_prev = 0, seconds = 0;
+uint8_t state;
+uint8_t buf[2], status;
+
+bool battery_detect = false;
+bool is_ltc2944_config = false;
+
+
+typedef enum {
+	DEFAULT_OFF,
+    CURRENT_500mA,
+    CURRENT_1000mA,
+    CURRENT_1500mA,
+    CURRENT_2000mA,
+    CURRENT_2500mA,
+    CURRENT_3000mA,
+    CURRENT_3500mA,
+    CURRENT_4000mA,
+    CURRENT_4500mA,
+    CURRENT_5000mA,
+    CURRENT_MAX // The number of available current settings
+} LoadCurrent_t;
+
+uint16_t dac_voltage[CURRENT_MAX] = {
+		0,		// 0mA (OFF)
+		251,  	// 500mA
+		501,  	// 1000mA
+		744,  	// 1500mA
+		990,  	// 2000mA
+		1233, 	// 2500mA
+		1477, 	// 3000mA
+		1720, 	// 3500mA
+		1966, 	// 4000mA
+		2214, 	// 4500mA
+		2455  	// 5000mA
+};
+
+char* current_labels[CURRENT_MAX] = {
+		"000mA"
+		"500mA",
+		"1000mA",
+		"1500mA",
+		"2000mA",
+		"2500mA",
+		"3000mA",
+		"3500mA",
+		"4000mA",
+		"4500mA",
+		"5000mA"
+};
+
+/* LOAD MAX MIN THRESHOLDs */
+#define MAX_LOAD_VOLTAGE		30
+#define MAX_LOAD_CURRENT		5
+
 
 /* DAC Defines */
 #define MCP47255_REF_VOLT 4096
@@ -101,6 +159,29 @@ void myOLED_int8(uint16_t cursorX, uint16_t cursorY, uint8_t data);
 float SlewRate_Limiter(float currentDACValue, float targetDACValue, float stepSize);
 uint16_t setVoltageGradually(uint16_t currentValue, uint16_t finalValue, uint16_t stepSize);
 uint16_t calculateNextVoltage(uint16_t currentValue, uint16_t finalValue, uint16_t stepSize);
+HAL_StatusTypeDef LTC2944_Device_Config(void);
+
+typedef enum
+{
+	IDLE 		= 0,
+	BATT_CONN	= 1,
+	RUN			= 2,
+}device_state_t;
+
+
+// UART printf stuff
+#ifdef __GNUC__
+#define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
+#else
+#define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
+#endif
+
+PUTCHAR_PROTOTYPE
+{
+  HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
+  return ch;
+}
+
 
 /* USER CODE END PFP */
 
@@ -142,30 +223,29 @@ int main(void)
   MX_I2C2_Init();
   MX_I2C1_Init();
   MX_ADC1_Init();
-  MX_ADC2_Init();
-  MX_USART1_UART_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
   ssd1306_Init();
   HAL_ADCEx_Calibration_Start(&hadc1);
   HAL_Delay(100);
-  HAL_ADCEx_Calibration_Start(&hadc2);
-  HAL_Delay(100);
   HAL_ADC_Start(&hadc1);
-  HAL_ADC_Start(&hadc2);
+
   myMCP4725 = MCP4725_init(&hi2c1, MCP4725_ADDR, MCP47255_REF_VOLT);
+  LoadCurrent_t selected_current = DEFAULT_OFF;  // Default selection
 
   /* Initialise PID controller */
   PIDController pid = { PID_KP, PID_KI, PID_KD, PID_TAU, PID_LIM_MIN, PID_LIM_MAX,
 		  	  	  	  	  PID_LIM_MIN_INT, PID_LIM_MAX_INT, SAMPLE_TIME_S};
   PIDController_Init(&pid);
 
-//  LTC4151_t_Init(hi2c2, &LTC4151, A0, A1, sense_resistor);
-
-/*
-*  Keep LTC4151 in shutdown state to avoid lockup of I2C bus
-*/
-//  HAL_GPIO_WritePin(LTC4151_SHDN_N_GPIO_Port, LTC4151_SHDN_N_Pin, SET);
-
+  // Print the basic format (main page)
+  HAL_Delay(100);
+  myOLED_char(1, 12, "Volt = ");
+  myOLED_char(1, 24, "Curr = ");
+  myOLED_char(1, 36, "Chg  = ");
+  myOLED_char(1, 48, "Temp = ");
+  ssd1306_UpdateScreen();
+  HAL_Delay(100);
 
 //  for(i = 1; i < 127; i++){
 //	  ret = HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(i<<1), 3, 5);
@@ -175,51 +255,89 @@ int main(void)
 //		  HAL_Delay(2000);
 //	  }
 //  	}
-
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  selected_current = CURRENT_2000mA;
+  MCP4725_Set_Voltage(&myMCP4725, dac_voltage[selected_current]);
+
   while (1)
   {
 	  tick = HAL_GetTick();
-//	  myOLED_int(10, 0, tick);
-	  HAL_ADC_PollForConversion(&hadc1, 10);
-	  desired_value = (HAL_ADC_GetValue(&hadc1) * 3300 / 4096);
-//	  myOLED_int(10, 15, desired_value);
-
-	  HAL_ADC_PollForConversion(&hadc2, 10);
-	  measured_value = (HAL_ADC_GetValue(&hadc2) * 3300 / 4096);
-//	  myOLED_int(10, 30, measured_value);
-
-	  // Update PID controller with setpoint from potentiometer and measured voltage
-	  control_signal = PIDController_Update(&pid, (float)desired_value, (float)measured_value);
-//	  myOLED_float(10, 45, control_signal);
-
-	  next_voltage = setVoltageGradually(desired_value, (uint16_t)control_signal, 10);
-
-      MCP4725_Set_Voltage(&myMCP4725, next_voltage);
-
+	  myOLED_int(1, 2, tick);
+//	  LTC2944_Init(ltc2944_struct);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+//      MCP4725_Set_Voltage(&myMCP4725, dac_voltage[selected_current]);
+
+	  HAL_ADC_PollForConversion(&hadc1, 10);
+  	  if(HAL_ADC_GetValue(&hadc1) >= 200){
+  		  battery_detect = true;
+  	  }else if(HAL_ADC_GetValue(&hadc1) < 200){
+  		  battery_detect = false;
+  	  }
+	  switch(state){
+	  case IDLE:
+		  if(battery_detect){
+			  state = BATT_CONN;
+		  }else{
+			  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, RESET);
+			  myOLED_char(50, 24, "        ");	// print empty spaces in curr
+			  myOLED_char(50, 36, "       ");	// print empty spaces in chg
+			  myOLED_char(50, 48, "  ");		// print empty spaces in temp
+			  myOLED_int(50, 2, 0);
+			  // Resets the seconds count every time battery is removed
+			  if(seconds > 1){
+				  seconds = 0;
+			  }
+		  }
+		  break;
+
+	  case BATT_CONN:
+		  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, SET); 		// Turn on RED led for indication
+		  LTC2944_Device_Config();
+		  state = RUN;
+		  break;
+
+	  case RUN:
+		  /*
+		  * test timer for run condition
+		  */
+		  if(tick - sec_prev >= 1000){		// 1000ms = 1 sec
+			  sec_prev = tick;
+			  myOLED_int(50, 2, seconds++);
+		  }
+		  if(battery_detect){
+			  status = LTC2944_Get_Battery_Data(&ltc2944_struct);
+			  // print the battery values on oled screen
+			  myOLED_float(50, 12, ltc2944_data.voltage);
+			  myOLED_float(50, 24, ltc2944_data.current);
+			  myOLED_float(50, 36, ltc2944_data.acc_charge);
+			  myOLED_int(50, 48, ltc2944_data.temperature);
+//			  if(status != HAL_OK){
+//				  state = STUCK;
+//				  break;
+//			  }
+		  }else{
+			  state = IDLE;
+		  }
+		  break;
+
+	  default:
+	  }
 
 	  if(tick - prev_tick >= blink_delay){
 		  prev_tick = tick;
 		  HAL_GPIO_TogglePin(LED_BLU_GPIO_Port, LED_BLU_Pin);
-//		  ssd1306_Fill(Black);
+		  myOLED_int(75, 48, state);
+		  myOLED_int(95, 48, status);
+		  ssd1306_UpdateScreen();
 	  }
-//	  MCP4725_Set_Voltage(&myMCP4725, 1000);
-
-//	  printf("Hello World,");
-//	  printf("\r\n");
-      // Update previous control signal
-//	  prev_control_signal = control_signal;
-	  HAL_Delay(200);
-//	  ssd1306_UpdateScreen();
-
   }
+
+
   /* USER CODE END 3 */
 }
 
@@ -270,11 +388,18 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-int __io_putchar(int ch){
-	HAL_UART_Transmit(&huart1, (uint8_t *) &ch, 1, 10);
-	return ch;
+
+HAL_StatusTypeDef LTC2944_Device_Config(void){
+	ltc2944_struct.adc_mode 		=	Automatic_Mode;
+	ltc2944_struct.alcc_mode 		= 	ALCC_Disable;
+	ltc2944_struct.sense_resistor 	= 	5;
+	ltc2944_struct.batt_capacity 	=	7000;
+	ltc2944_struct.i2c_handle 		= 	hi2c2;
+	ltc2944_struct.vth_max 			=	MAX_LOAD_VOLTAGE;
+	ltc2944_struct.cth_max			= 	MAX_LOAD_CURRENT;
+	return LTC2944_Init(ltc2944_struct);
 }
-//"Project Properties > C/C++ Build > Settings > Tool Settings", or add manually "-u _printf_float" in linker flags.
+
 void myOLED_char(uint16_t cursorX, uint16_t cursorY, char* data){
 
 	ssd1306_SetCursor(cursorX, cursorY);
@@ -284,7 +409,7 @@ void myOLED_char(uint16_t cursorX, uint16_t cursorY, char* data){
 void myOLED_float(uint16_t cursorX, uint16_t cursorY, float data){
 	char str_data[10];
 
-	sprintf(str_data, "%f", data);
+	sprintf(str_data, "%.3f", data);
 	ssd1306_SetCursor(cursorX, cursorY);
 	ssd1306_WriteString(str_data, Font_7x10, White);
 }

@@ -63,6 +63,11 @@ void Error_Handler(void);
 #define LED_GRN_GPIO_Port GPIOC
 #define LED_BLU_Pin GPIO_PIN_15
 #define LED_BLU_GPIO_Port GPIOC
+#define BATT_SENSE_Pin GPIO_PIN_1
+#define BATT_SENSE_GPIO_Port GPIOB
+#define LTC2944_ALCC_Pin GPIO_PIN_8
+#define LTC2944_ALCC_GPIO_Port GPIOB
+#define LTC2944_ALCC_EXTI_IRQn EXTI9_5_IRQn
 #define LTC4151_SHDN_N_Pin GPIO_PIN_9
 #define LTC4151_SHDN_N_GPIO_Port GPIOB
 

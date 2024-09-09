@@ -1,3 +1,0 @@
-../Core/Src/mcp4725.c:11:9:MCP4725_init	1
-../Core/Src/mcp4725.c:21:6:MCP4725_Set_Voltage	3
-../Core/Src/mcp4725.c:43:6:MCP4725_Set_Voltage_EEPROM	3

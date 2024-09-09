@@ -9,6 +9,11 @@ RM := rm -rf
 
 # All of the sources participating in the build are defined here
 -include sources.mk
+-include ssd1306_oled_lib/src/subdir.mk
+-include pid/subdir.mk
+-include mcp4725/subdir.mk
+-include ltc4151/subdir.mk
+-include ltc2944/subdir.mk
 -include Drivers/STM32F1xx_HAL_Driver/Src/subdir.mk
 -include Core/Startup/subdir.mk
 -include Core/Src/subdir.mk
