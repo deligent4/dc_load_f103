@@ -34,6 +34,10 @@
 #include "../../ltc4151/ltc4151.h"
 #include "../../mcp4725/mcp4725.h"
 #include "../../pid/pid.h"
+#include "../../ltc2959/ltc2959.h"
+#include "../../ad5693/ad5693.h"
+#include "../../filter/filter.h"
+
 
 /* USER CODE END Includes */
 
@@ -58,14 +62,14 @@
 uint32_t tick, prev_tick = 0;
 uint16_t blink_delay = 50;
 char stringValue[8];  // Adjust the buffer size as needed
-
+int32_t curr, current = 0;
 LTC4151_t LTC4151;
 uint16_t sense_resistor = 5;		//8 milli-ohms
-uint16_t voltage = 0, voltage_snapshot = 0;
-uint16_t current = 0, current_snapshot = 0;
+uint32_t voltage = 0, charge = 0;
+float filter_volt = 0, filter_current = 0;
+float prev_current_output = 0;
 uint8_t i, ret, i2c_add;
 uint32_t desired_value, measured_value = 0;
-float control_signal, prev_control_signal, control_signal_slew;
 MCP4725 myMCP4725;
 uint16_t next_voltage;
 
@@ -74,53 +78,23 @@ extern ltc2944_data_t ltc2944_data;
 uint16_t sec_prev = 0, seconds = 0;
 uint8_t state;
 uint8_t buf[2], status;
-
-bool battery_detect = false;
-bool is_ltc2944_config = false;
-
-
-typedef enum {
-	DEFAULT_OFF,
-    CURRENT_500mA,
-    CURRENT_1000mA,
-    CURRENT_1500mA,
-    CURRENT_2000mA,
-    CURRENT_2500mA,
-    CURRENT_3000mA,
-    CURRENT_3500mA,
-    CURRENT_4000mA,
-    CURRENT_4500mA,
-    CURRENT_5000mA,
-    CURRENT_MAX // The number of available current settings
-} LoadCurrent_t;
-
-uint16_t dac_voltage[CURRENT_MAX] = {
-		0,		// 0mA (OFF)
-		251,  	// 500mA
-		501,  	// 1000mA
-		744,  	// 1500mA
-		990,  	// 2000mA
-		1233, 	// 2500mA
-		1477, 	// 3000mA
-		1720, 	// 3500mA
-		1966, 	// 4000mA
-		2214, 	// 4500mA
-		2455  	// 5000mA
+uint16_t control_volt;
+uint32_t prev_print_delay = 0, print_delay = 100;
+uint32_t prev_control_delay = 0, control_delay = 10;
+bool battery_detect = false ;
+LTC2959_Config_t ltc2959 = {
+    .ADC_mode		= 	CTRL_ADC_MODE_CONT_ALT_V_I,
+    .GPIO_config 	= 	CTRL_GPIO_CONFIG_ANALOG_INPUT_1560mV,
+    .voltage_input 	= 	CTRL_CONFIG_VOLTAGE_INPUT_SENSEN,
+    .CC_deadband 	= 	CC_CONFIG_DEADBAND_0,
 };
 
-char* current_labels[CURRENT_MAX] = {
-		"000mA"
-		"500mA",
-		"1000mA",
-		"1500mA",
-		"2000mA",
-		"2500mA",
-		"3000mA",
-		"3500mA",
-		"4000mA",
-		"4500mA",
-		"5000mA"
+ad5693_configuration_t ad5693 = {
+		.gain_x2 		= false,
+		.ref_disable	= false,
+		.mode 		= normal_mode,
 };
+
 
 /* LOAD MAX MIN THRESHOLDs */
 #define MAX_LOAD_VOLTAGE		30
@@ -156,10 +130,6 @@ void myOLED_char(uint16_t cursorX, uint16_t cursorY, char* data);
 void myOLED_float(uint16_t cursorX, uint16_t cursorY, float data);
 void myOLED_int(uint16_t cursorX, uint16_t cursorY, uint16_t data);
 void myOLED_int8(uint16_t cursorX, uint16_t cursorY, uint8_t data);
-float SlewRate_Limiter(float currentDACValue, float targetDACValue, float stepSize);
-uint16_t setVoltageGradually(uint16_t currentValue, uint16_t finalValue, uint16_t stepSize);
-uint16_t calculateNextVoltage(uint16_t currentValue, uint16_t finalValue, uint16_t stepSize);
-HAL_StatusTypeDef LTC2944_Device_Config(void);
 
 typedef enum
 {
@@ -230,16 +200,28 @@ int main(void)
   HAL_Delay(100);
   HAL_ADC_Start(&hadc1);
 
-  myMCP4725 = MCP4725_init(&hi2c1, MCP4725_ADDR, MCP47255_REF_VOLT);
-  LoadCurrent_t selected_current = DEFAULT_OFF;  // Default selection
+  printf("LTC2959 Begin\n\r");
+//  while(HAL_I2C_IsDeviceReady(&LTC2959_I2C_PORT, LTC2959_I2C_ADDR, 100, 1000) != HAL_OK);	// wait for it to come alive
+  LTC2959_Init(&ltc2959);
+  HAL_Delay(1000);
+
+  AD5693_Reset();
+  HAL_Delay(10);
+  AD5693_Init(ad5693);
+  HAL_Delay(10);
+
+
+
+//  myMCP4725 = MCP4725_init(&hi2c1, MCP4725_ADDR, MCP47255_REF_VOLT);
+//  LoadCurrent_t selected_current = DEFAULT_OFF;  // Default selection
 
   /* Initialise PID controller */
-  PIDController pid = { PID_KP, PID_KI, PID_KD, PID_TAU, PID_LIM_MIN, PID_LIM_MAX,
-		  	  	  	  	  PID_LIM_MIN_INT, PID_LIM_MAX_INT, SAMPLE_TIME_S};
-  PIDController_Init(&pid);
+//  PIDController pid = { PID_KP, PID_KI, PID_KD, PID_TAU, PID_LIM_MIN, PID_LIM_MAX,
+//		  	  	  	  	  PID_LIM_MIN_INT, PID_LIM_MAX_INT, SAMPLE_TIME_S};
+//  PIDController_Init(&pid);
 
   // Print the basic format (main page)
-  HAL_Delay(100);
+//  HAL_Delay(100);
   myOLED_char(1, 12, "Volt = ");
   myOLED_char(1, 24, "Curr = ");
   myOLED_char(1, 36, "Chg  = ");
@@ -259,74 +241,84 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  selected_current = CURRENT_2000mA;
-  MCP4725_Set_Voltage(&myMCP4725, dac_voltage[selected_current]);
+//  MCP4725_Set_Voltage(&myMCP4725, 100);
+//  AD5693_Set_Voltage(2);		// Test DAC
+//  AD5693_Set_Voltage_Raw(1000);
 
   while (1)
   {
 	  tick = HAL_GetTick();
-	  myOLED_int(1, 2, tick);
-//	  LTC2944_Init(ltc2944_struct);
+//	  myOLED_int(1, 2, tick);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-//      MCP4725_Set_Voltage(&myMCP4725, dac_voltage[selected_current]);
-
 	  HAL_ADC_PollForConversion(&hadc1, 10);
   	  if(HAL_ADC_GetValue(&hadc1) >= 200){
   		  battery_detect = true;
   	  }else if(HAL_ADC_GetValue(&hadc1) < 200){
   		  battery_detect = false;
   	  }
-	  switch(state){
-	  case IDLE:
-		  if(battery_detect){
-			  state = BATT_CONN;
-		  }else{
-			  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, RESET);
-			  myOLED_char(50, 24, "        ");	// print empty spaces in curr
-			  myOLED_char(50, 36, "       ");	// print empty spaces in chg
-			  myOLED_char(50, 48, "  ");		// print empty spaces in temp
-			  myOLED_int(50, 2, 0);
-			  // Resets the seconds count every time battery is removed
-			  if(seconds > 1){
-				  seconds = 0;
-			  }
-		  }
-		  break;
 
-	  case BATT_CONN:
-		  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, SET); 		// Turn on RED led for indication
-		  LTC2944_Device_Config();
-		  state = RUN;
-		  break;
 
-	  case RUN:
-		  /*
-		  * test timer for run condition
-		  */
-		  if(tick - sec_prev >= 1000){		// 1000ms = 1 sec
-			  sec_prev = tick;
-			  myOLED_int(50, 2, seconds++);
-		  }
-		  if(battery_detect){
-			  status = LTC2944_Get_Battery_Data(&ltc2944_struct);
-			  // print the battery values on oled screen
-			  myOLED_float(50, 12, ltc2944_data.voltage);
-			  myOLED_float(50, 24, ltc2944_data.current);
-			  myOLED_float(50, 36, ltc2944_data.acc_charge);
-			  myOLED_int(50, 48, ltc2944_data.temperature);
-//			  if(status != HAL_OK){
-//				  state = STUCK;
-//				  break;
-//			  }
-		  }else{
-			  state = IDLE;
-		  }
-		  break;
 
-	  default:
+  	  if(tick - prev_control_delay >= control_delay){
+		  voltage = LTC2959_Get_Voltage();
+		  current = LTC2959_Get_Current();
+		  charge = LTC2959_Get_Acc_Charge();
+		  control_volt = Control_DAC_Output(2000, current, battery_detect);
+		  AD5693_Set_Voltage_Raw(control_volt);
+		  prev_control_delay = tick;
 	  }
+
+	  if(tick - prev_print_delay >= print_delay){
+//		  printf("LTC2959_Voltage = %.4f\n\r", voltage);
+//		  printf("LTC2959_current = %.4f\n\r", current);
+//		  printf("LTC2959_charge = %.4f\n\r\v", charge);
+//		  printf("LTC2959_current = %ld\n\r", current);
+//		  prev_print_delay = tick;
+	  }
+
+//	  switch(state){
+//	  case IDLE:
+//		  if(battery_detect){
+//			  state = BATT_CONN;
+//		  }else{
+//			  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, RESET);
+//			  myOLED_char(50, 24, "        ");	// print empty spaces in curr
+//			  myOLED_char(50, 36, "       ");	// print empty spaces in chg
+//			  myOLED_char(50, 48, "  ");		// print empty spaces in temp
+//			  myOLED_int(50, 2, 0);
+//			  // Resets the seconds count every time battery is removed
+//			  if(seconds > 1){
+//				  seconds = 0;
+//			  }
+//		  }
+//		  break;
+//
+//	  case BATT_CONN:
+//		  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, SET); 		// Turn on RED led for indication
+//		  state = RUN;
+//		  break;
+//
+//	  case RUN:
+//		  /*
+//		  * test timer for run condition
+//		  */
+//		  if(tick - sec_prev >= 1000){		// 1000ms = 1 sec
+//			  sec_prev = tick;
+//			  myOLED_int(50, 2, seconds++);
+//		  }
+//		  if(battery_detect){
+//			  // print the battery values on oled screen
+//				  break;
+////			  }
+//		  }else{
+//			  state = IDLE;
+//		  }
+//		  break;
+//
+//	  default:
+//	  }
 
 	  if(tick - prev_tick >= blink_delay){
 		  prev_tick = tick;
@@ -429,67 +421,6 @@ void myOLED_int8(uint16_t cursorX, uint16_t cursorY, uint8_t data){
 	ssd1306_SetCursor(cursorX, cursorY);
 	ssd1306_WriteString(str_data, Font_7x10, White);
 }
-
-
-uint16_t setVoltageGradually(uint16_t currentValue, uint16_t finalValue, uint16_t stepSize) {
-    static uint32_t lastStepTime = 0; // Record the time of the last step
-    static uint32_t delayDuration = 10; // Delay duration in milliseconds
-
-    uint32_t currentTime = HAL_GetTick(); // Get the current time
-
-    // Check if it's time to take the next step
-    if (currentTime - lastStepTime >= delayDuration) {
-        // Update the current value
-        if (currentValue < finalValue) {
-            currentValue = (uint16_t)(currentValue + stepSize);
-            if (currentValue > finalValue) {
-                currentValue = finalValue;
-            }
-        } else {
-            currentValue = (uint16_t)(currentValue - stepSize);
-            if (currentValue < finalValue) {
-                currentValue = finalValue;
-            }
-        }
-
-        // Update the last step time
-        lastStepTime = currentTime;
-    }
-
-    // Ensure the final value is returned precisely
-    return currentValue;
-}
-
-uint16_t calculateNextVoltage(uint16_t currentValue, uint16_t finalValue, uint16_t stepSize) {
-    static uint32_t lastStepTime = 0; // Record the time of the last step
-    static uint32_t delayDuration = 10; // Delay duration in milliseconds
-
-    uint32_t currentTime = HAL_GetTick(); // Get the current time
-
-    // Check if it's time to take the next step
-    if (currentTime - lastStepTime >= delayDuration) {
-        // Update the current value
-        if (currentValue < finalValue) {
-            currentValue = (uint16_t)(currentValue + stepSize);
-            if (currentValue > finalValue) {
-                currentValue = finalValue;
-            }
-        } else {
-            currentValue = (uint16_t)(currentValue - stepSize);
-            if (currentValue < finalValue) {
-                currentValue = finalValue;
-            }
-        }
-
-        // Update the last step time
-        lastStepTime = currentTime;
-    }
-
-    // Ensure the final value is returned precisely
-    return currentValue;
-}
-
-
 /* USER CODE END 4 */
 
 /**

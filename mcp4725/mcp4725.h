@@ -20,13 +20,11 @@ typedef enum {
 }MCP4725_I2C_ADDRESS;
 
 
-// MCP4725 class
 typedef struct
 {
-	// Privates:
-	I2C_HandleTypeDef* 		hi2c;
+	I2C_HandleTypeDef* 			hi2c;
 	MCP4725_I2C_ADDRESS 		_i2cAddress;
-	uint16_t             	_refVoltage;
+	uint16_t             		_refVoltage;
 } MCP4725;
 
 

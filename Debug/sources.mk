@@ -25,7 +25,10 @@ SUBDIRS := \
 Core/Src \
 Core/Startup \
 Drivers/STM32F1xx_HAL_Driver/Src \
+ad5693 \
+filter \
 ltc2944 \
+ltc2959 \
 ltc4151 \
 mcp4725 \
 pid \

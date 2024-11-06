@@ -1,0 +1,5 @@
+../ad5693/ad5693.c:11:19:AD5693_Reset	24	static
+../ad5693/ad5693.c:23:19:AD5693_Init	40	static
+../ad5693/ad5693.c:44:19:AD5693_Set_Voltage	40	static
+../ad5693/ad5693.c:67:19:AD5693_Set_OP_Mode	40	static
+../ad5693/ad5693.c:102:19:AD5693_Set_Voltage_Raw	40	static

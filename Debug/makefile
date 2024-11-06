@@ -13,7 +13,10 @@ RM := rm -rf
 -include pid/subdir.mk
 -include mcp4725/subdir.mk
 -include ltc4151/subdir.mk
+-include ltc2959/subdir.mk
 -include ltc2944/subdir.mk
+-include filter/subdir.mk
+-include ad5693/subdir.mk
 -include Drivers/STM32F1xx_HAL_Driver/Src/subdir.mk
 -include Core/Startup/subdir.mk
 -include Core/Src/subdir.mk
