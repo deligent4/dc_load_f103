@@ -32,10 +32,9 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Core/Src/../../ssd1306_oled_lib/inc/../../ssd1306_oled_lib/inc/ssd1306_fonts.h \
  ../Core/Src/../../ssd1306_oled_lib/inc/../../ssd1306_oled_lib/inc/../../ssd1306_oled_lib/inc/ssd1306_conf.h \
  ../Core/Src/../../ssd1306_oled_lib/inc/ssd1306_tests.h \
- ../Core/Src/../../ltc2944/ltc2944.h ../Core/Src/../../ltc4151/ltc4151.h \
- ../Core/Src/../../mcp4725/mcp4725.h ../Core/Src/../../pid/pid.h \
- ../Core/Src/../../ltc2959/ltc2959.h ../Core/Src/../../ad5693/ad5693.h \
- ../Core/Src/../../filter/filter.h
+ ../Core/Src/../../ltc4151/ltc4151.h ../Core/Src/../../mcp4725/mcp4725.h \
+ ../Core/Src/../../pid/pid.h ../Core/Src/../../ltc2959/ltc2959.h \
+ ../Core/Src/../../ad5693/ad5693.h ../Core/Src/../../filter/filter.h
 ../Core/Inc/main.h:
 ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal.h:
 ../Core/Inc/stm32f1xx_hal_conf.h:
@@ -74,7 +73,6 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Core/Src/../../ssd1306_oled_lib/inc/../../ssd1306_oled_lib/inc/ssd1306_fonts.h:
 ../Core/Src/../../ssd1306_oled_lib/inc/../../ssd1306_oled_lib/inc/../../ssd1306_oled_lib/inc/ssd1306_conf.h:
 ../Core/Src/../../ssd1306_oled_lib/inc/ssd1306_tests.h:
-../Core/Src/../../ltc2944/ltc2944.h:
 ../Core/Src/../../ltc4151/ltc4151.h:
 ../Core/Src/../../mcp4725/mcp4725.h:
 ../Core/Src/../../pid/pid.h:

@@ -16,14 +16,11 @@ uint16_t Control_DAC_Output(uint16_t mA_setpoint, int32_t mA_current, bool contr
     int32_t error = mA_setpoint - mA_measured;
     const uint16_t dac_upper_limit = 40000;
     const uint16_t dac_lower_limit = 0;
-
+    const uint16_t integral_windup = 10000;
     // Integer-scaled PID Control parameters
-    int32_t Kp = 10;    // Proportional gain, scaled by 0
-    int32_t Ki = 600;     // Integral gain, scaled by 1000
-    int32_t Kd = 10;     // Derivative gain, scaled by 1000
-
-    // Proportional Term (P)
-    int32_t adjustment = (Kp * error);
+    int32_t Kp = 1;    // Proportional gain, scaled by 0
+    int32_t Ki = 10;     // Integral gain, scaled by 1000
+    int32_t Kd = 200;     // Derivative gain, scaled by 1000
 
     if(!(control_flag)){ // set all static to 0
     	previous_error = 0;
@@ -31,27 +28,25 @@ uint16_t Control_DAC_Output(uint16_t mA_setpoint, int32_t mA_current, bool contr
     	return dac_value = 0;
 	}
 
-//    if (control_flag) {
-//        // Ramp up/down logic for smooth transition
-//        if (dac_value < target_dac_value) {
-//            dac_value += ramp_increment;
-//            if (dac_value > target_dac_value) dac_value = target_dac_value;
-//        } else if (dac_value > target_dac_value) {
-//            dac_value -= ramp_increment;
-//            if (dac_value < target_dac_value) dac_value = target_dac_value;
-//        }
-//    }
+    printf("ERR: %ld  \t", error);
+
+    // Proportional Term (P)
+    int32_t adjustment = (Kp * error);
+    printf("adj P: %ld  \t", adjustment);
 
     // Integral Term (I)
     integral_sum += error;
+    printf("IS: %ld  \t", integral_sum);
     // Integral windup protection
-    if (integral_sum > 10000) integral_sum = 10000;
-    if (integral_sum < -10000) integral_sum = -10000;
+    if (integral_sum > integral_windup) integral_sum = integral_windup;
+    if (integral_sum < -integral_windup) integral_sum = -integral_windup;
     adjustment += (Ki * integral_sum) / 1000;
+    printf("adj I: %ld  \t", adjustment);
 
     // Derivative Term (D)
     int32_t derivative = error - previous_error;
     adjustment += (Kd * derivative) / 1000;
+    printf("adj D: %ld  \n\r", adjustment);
 
     // Calculate new DAC value and ensure it stays within limits
     int new_dac_value = (int)dac_value + adjustment;
@@ -68,8 +63,8 @@ uint16_t Control_DAC_Output(uint16_t mA_setpoint, int32_t mA_current, bool contr
     previous_error = error;
 
     // Print debug info
-    printf("new_dac: %d, _dac: %d, error: %ld, measured_curr: %ld, integral: %ld, derivative: %ld\n\r\v",
-           new_dac_value, dac_value, error, mA_measured, integral_sum, derivative);
+//    printf("new_dac: %d, _dac: %d, error: %ld, measured_curr: %ld, integral: %ld, derivative: %ld\n\r\v",
+//           new_dac_value, dac_value, error, mA_measured, integral_sum, derivative);
 
     return dac_value;
 }

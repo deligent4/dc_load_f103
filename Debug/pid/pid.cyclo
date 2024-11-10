@@ -1,8 +1,1 @@
-../pid/pid.c:11:6:PIDController_Init	1
-../pid/pid.c:24:7:PIDController_Update	5
-../pid/pid.c:114:7:soft_limit	1
-../pid/pid.c:119:10:calculate_pid_output	1
-../pid/pid.c:151:10:apply_slew_rate_limit	4
-../pid/pid.c:166:7:read_current_sensor	1
-../pid/pid.c:176:6:dc_load_control_task	1
-../pid/pid.c:248:10:Control_DAC_Output	6
+../pid/pid.c:10:10:Control_DAC_Output	6

@@ -30,7 +30,7 @@
 #include <stdio.h>
 #include "../../ssd1306_oled_lib/inc/ssd1306.h"
 #include "../../ssd1306_oled_lib/inc/ssd1306_tests.h"
-#include "../../ltc2944/ltc2944.h"
+//#include "../../ltc2944/ltc2944.h"
 #include "../../ltc4151/ltc4151.h"
 #include "../../mcp4725/mcp4725.h"
 #include "../../pid/pid.h"
@@ -62,19 +62,15 @@
 uint32_t tick, prev_tick = 0;
 uint16_t blink_delay = 50;
 char stringValue[8];  // Adjust the buffer size as needed
-int32_t curr, current = 0;
+int32_t curr, current = 0, filter_current = 0;
 LTC4151_t LTC4151;
 uint16_t sense_resistor = 5;		//8 milli-ohms
 uint32_t voltage = 0, charge = 0;
-float filter_volt = 0, filter_current = 0;
-float prev_current_output = 0;
 uint8_t i, ret, i2c_add;
 uint32_t desired_value, measured_value = 0;
 MCP4725 myMCP4725;
 uint16_t next_voltage;
 
-ltc2944_configuration_t ltc2944_struct = {0};
-extern ltc2944_data_t ltc2944_data;
 uint16_t sec_prev = 0, seconds = 0;
 uint8_t state;
 uint8_t buf[2], status;
@@ -82,11 +78,14 @@ uint16_t control_volt;
 uint32_t prev_print_delay = 0, print_delay = 100;
 uint32_t prev_control_delay = 0, control_delay = 10;
 bool battery_detect = false ;
+uint32_t sensor_data[10];
+
+
 LTC2959_Config_t ltc2959 = {
-    .ADC_mode		= 	CTRL_ADC_MODE_CONT_ALT_V_I,
+    .ADC_mode		= 	CTRL_ADC_MODE_CONT_I,
     .GPIO_config 	= 	CTRL_GPIO_CONFIG_ANALOG_INPUT_1560mV,
     .voltage_input 	= 	CTRL_CONFIG_VOLTAGE_INPUT_SENSEN,
-    .CC_deadband 	= 	CC_CONFIG_DEADBAND_0,
+    .CC_deadband 	= 	CC_CONFIG_DEADBAND_20,
 };
 
 ad5693_configuration_t ad5693 = {
@@ -96,31 +95,19 @@ ad5693_configuration_t ad5693 = {
 };
 
 
-/* LOAD MAX MIN THRESHOLDs */
-#define MAX_LOAD_VOLTAGE		30
-#define MAX_LOAD_CURRENT		5
 
+/*
+ * MAXIMUM AND MINIMUM SETTINGS FOR LOAD
+ */
+#define MAX_CC_VALUE			5.0			// 5A maximum current
+#define MIN_CC_VALUE			0.001		// 1mA minimum	current
+#define MAX_CV_VALUE			30			// 30V maximum voltage
+#define MIN_CV_VALUE			3			// 3V minimum voltage
+#define MAX_CR_VALUE			10			// 10Ohm maximum resistance
+#define MIN_CR_VALUE			0.1			// 100mOhm minimum resistance
+#define MAX_CP_VALUE			99.999		// 99.999W maximum power CP is limited to 99.999Watt
+#define MIN_CP_VALUE			1			// 1W minimum power
 
-/* DAC Defines */
-#define MCP47255_REF_VOLT 4096
-
-/* Controller parameters */
-#define PID_KP  2.0f
-#define PID_KI  1.0f
-#define PID_KD  0.0f
-
-#define PID_TAU 0.02f
-
-#define PID_LIM_MIN 	0.0f
-#define PID_LIM_MAX  	4096.0f
-
-#define PID_LIM_MIN_INT -5.0f
-#define PID_LIM_MAX_INT  5.0f
-
-#define SAMPLE_TIME_S 0.01f
-
-/* Maximum run-time of simulation */
-#define SIMULATION_TIME_MAX 4.0f
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -130,6 +117,7 @@ void myOLED_char(uint16_t cursorX, uint16_t cursorY, char* data);
 void myOLED_float(uint16_t cursorX, uint16_t cursorY, float data);
 void myOLED_int(uint16_t cursorX, uint16_t cursorY, uint16_t data);
 void myOLED_int8(uint16_t cursorX, uint16_t cursorY, uint8_t data);
+uint32_t Filter_Outliers(uint32_t* data, uint16_t length);
 
 typedef enum
 {
@@ -201,7 +189,7 @@ int main(void)
   HAL_ADC_Start(&hadc1);
 
   printf("LTC2959 Begin\n\r");
-//  while(HAL_I2C_IsDeviceReady(&LTC2959_I2C_PORT, LTC2959_I2C_ADDR, 100, 1000) != HAL_OK);	// wait for it to come alive
+  while(HAL_I2C_IsDeviceReady(&LTC2959_I2C_PORT, LTC2959_I2C_ADDR, 100, 1000) != HAL_OK);	// wait for it to come alive
   LTC2959_Init(&ltc2959);
   HAL_Delay(1000);
 
@@ -212,16 +200,7 @@ int main(void)
 
 
 
-//  myMCP4725 = MCP4725_init(&hi2c1, MCP4725_ADDR, MCP47255_REF_VOLT);
-//  LoadCurrent_t selected_current = DEFAULT_OFF;  // Default selection
 
-  /* Initialise PID controller */
-//  PIDController pid = { PID_KP, PID_KI, PID_KD, PID_TAU, PID_LIM_MIN, PID_LIM_MAX,
-//		  	  	  	  	  PID_LIM_MIN_INT, PID_LIM_MAX_INT, SAMPLE_TIME_S};
-//  PIDController_Init(&pid);
-
-  // Print the basic format (main page)
-//  HAL_Delay(100);
   myOLED_char(1, 12, "Volt = ");
   myOLED_char(1, 24, "Curr = ");
   myOLED_char(1, 36, "Chg  = ");
@@ -230,20 +209,22 @@ int main(void)
   HAL_Delay(100);
 
 //  for(i = 1; i < 127; i++){
-//	  ret = HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(i<<1), 3, 5);
+//	  ret = HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(i), 3, 5);
 //	  if (ret == HAL_OK) /* No ACK Received At That Address */
 //	  {
+//		  printf("%x \n\r", i);
 //		  i2c_add = i;
-//		  HAL_Delay(2000);
+//		  HAL_Delay(1000);
 //	  }
-//  	}
+//  	}	  HAL_Delay(20000);
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-//  MCP4725_Set_Voltage(&myMCP4725, 100);
-//  AD5693_Set_Voltage(2);		// Test DAC
-//  AD5693_Set_Voltage_Raw(1000);
+
+  printf("RUNNING");
 
   while (1)
   {
@@ -260,22 +241,31 @@ int main(void)
   	  }
 
 
+//      for (uint8_t i = 0; i < 10; i++) {
+//          sensor_data[i] = LTC2959_Get_Current();
+//      }
 
-  	  if(tick - prev_control_delay >= control_delay){
+//	  current = LTC2959_Get_Current();
+//  	  filter_current = Get_Current_Filtered(current);
+
+      if(tick - prev_control_delay >= control_delay){
 		  voltage = LTC2959_Get_Voltage();
 		  current = LTC2959_Get_Current();
 		  charge = LTC2959_Get_Acc_Charge();
-		  control_volt = Control_DAC_Output(2000, current, battery_detect);
+//		  control_volt = Control_DAC_Output(500, current, battery_detect);
 		  AD5693_Set_Voltage_Raw(control_volt);
 		  prev_control_delay = tick;
 	  }
 
+
+
 	  if(tick - prev_print_delay >= print_delay){
 //		  printf("LTC2959_Voltage = %.4f\n\r", voltage);
-//		  printf("LTC2959_current = %.4f\n\r", current);
+//		  printf("LTC2959_current = %ld, Filter_current = %ld\n\r\v", current, filter_current);
+//		  printf("%ld, %ld, %ld \n\r", voltage, current, filter_current);
 //		  printf("LTC2959_charge = %.4f\n\r\v", charge);
-//		  printf("LTC2959_current = %ld\n\r", current);
-//		  prev_print_delay = tick;
+		  printf("LTC2959_current = %ld\n\r", current);
+		  prev_print_delay = tick;
 	  }
 
 //	  switch(state){
@@ -323,9 +313,9 @@ int main(void)
 	  if(tick - prev_tick >= blink_delay){
 		  prev_tick = tick;
 		  HAL_GPIO_TogglePin(LED_BLU_GPIO_Port, LED_BLU_Pin);
-		  myOLED_int(75, 48, state);
-		  myOLED_int(95, 48, status);
-		  ssd1306_UpdateScreen();
+//		  myOLED_int(75, 48, state);
+//		  myOLED_int(95, 48, status);
+//		  ssd1306_UpdateScreen();
 	  }
   }
 
@@ -381,17 +371,6 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-HAL_StatusTypeDef LTC2944_Device_Config(void){
-	ltc2944_struct.adc_mode 		=	Automatic_Mode;
-	ltc2944_struct.alcc_mode 		= 	ALCC_Disable;
-	ltc2944_struct.sense_resistor 	= 	5;
-	ltc2944_struct.batt_capacity 	=	7000;
-	ltc2944_struct.i2c_handle 		= 	hi2c2;
-	ltc2944_struct.vth_max 			=	MAX_LOAD_VOLTAGE;
-	ltc2944_struct.cth_max			= 	MAX_LOAD_CURRENT;
-	return LTC2944_Init(ltc2944_struct);
-}
-
 void myOLED_char(uint16_t cursorX, uint16_t cursorY, char* data){
 
 	ssd1306_SetCursor(cursorX, cursorY);
@@ -420,6 +399,51 @@ void myOLED_int8(uint16_t cursorX, uint16_t cursorY, uint8_t data){
 	sprintf(str_data, "%d", data);
 	ssd1306_SetCursor(cursorX, cursorY);
 	ssd1306_WriteString(str_data, Font_7x10, White);
+}
+
+
+uint32_t Filter_Outliers(uint32_t* data, uint16_t length) {
+    uint32_t sum = 0;
+    uint32_t max_value = 0;
+    uint32_t min_value = UINT32_MAX;
+
+    // Calculate the sum, max, and min of the data
+    for (uint16_t i = 0; i < length; i++) {
+        sum += data[i];
+        if (data[i] > max_value) {
+            max_value = data[i];
+        }
+        if (data[i] < min_value) {
+            min_value = data[i];
+        }
+    }
+
+    // Calculate the mean without floating-point math
+    uint32_t mean = sum / length;
+
+    // Calculate the standard deviation without floating-point math
+    uint32_t variance = 0;
+    for (uint16_t i = 0; i < length; i++) {
+        int32_t diff = (int32_t)data[i] - (int32_t)mean;
+        variance += diff * diff;
+    }
+    variance /= length;
+    uint32_t std_dev = (uint32_t)sqrt((double)variance);
+
+    // Filter out outliers
+    uint32_t filtered_value = 0;
+    uint16_t outlier_count = 0;
+    for (uint16_t i = 0; i < length; i++) {
+        if (data[i] > THRESHOLD || abs((int32_t)data[i] - (int32_t)mean) > STD_THRESHOLD * (int32_t)std_dev) {
+            filtered_value += mean;
+            outlier_count++;
+        } else {
+            filtered_value += data[i];
+        }
+    }
+
+    // Return the filtered value, or the original value if no outliers were detected
+    return outlier_count > 0 ? filtered_value / (length - outlier_count) : LTC2959_Get_Current();
 }
 /* USER CODE END 4 */
 

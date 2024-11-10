@@ -279,7 +279,7 @@ int32_t LTC2959_Get_Current(){
 
 	int32_t current_mA = value * CURRENT_MULTIPLIER / 1000;
 
-	return current_mA;
+	return current_mA + 5;
 }
 
 

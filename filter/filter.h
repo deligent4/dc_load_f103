@@ -8,7 +8,7 @@
 #ifndef FILTER_H_
 #define FILTER_H_
 
-int Moving_Avg(int *ptrArrNumbers, long *ptrSum, int pos, int len, int nextNum);
-float Moving_Avg_Float(float *ptrArrNumbers, float *ptrSum, int pos, int len, float nextNum);
-float Kalman_Filter(float ADC_Value);
+int32_t Get_Current_Filtered(int32_t currentReading);
+
+
 #endif /* FILTER_H_ */
