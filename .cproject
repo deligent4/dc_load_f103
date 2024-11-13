@@ -78,15 +78,15 @@
 						</toolChain>
 					</folderInfo>
 					<sourceEntries>
-						<entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="Core"/>
-						<entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="Drivers"/>
-						<entry flags="VALUE_WORKSPACE_PATH" kind="sourcePath" name="ad5693"/>
 						<entry flags="VALUE_WORKSPACE_PATH" kind="sourcePath" name="filter"/>
-						<entry flags="VALUE_WORKSPACE_PATH" kind="sourcePath" name="ltc2944"/>
-						<entry flags="VALUE_WORKSPACE_PATH" kind="sourcePath" name="ltc2959"/>
 						<entry flags="VALUE_WORKSPACE_PATH" kind="sourcePath" name="ltc4151"/>
 						<entry flags="VALUE_WORKSPACE_PATH" kind="sourcePath" name="mcp4725"/>
 						<entry flags="VALUE_WORKSPACE_PATH" kind="sourcePath" name="pid"/>
+						<entry flags="VALUE_WORKSPACE_PATH" kind="sourcePath" name="ltc2944"/>
+						<entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="Core"/>
+						<entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="Drivers"/>
+						<entry flags="VALUE_WORKSPACE_PATH" kind="sourcePath" name="ad5693"/>
+						<entry flags="VALUE_WORKSPACE_PATH" kind="sourcePath" name="ltc2959"/>
 						<entry flags="VALUE_WORKSPACE_PATH" kind="sourcePath" name="ssd1306_oled_lib/src"/>
 					</sourceEntries>
 				</configuration>

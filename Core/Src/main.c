@@ -21,6 +21,7 @@
 #include "adc.h"
 #include "dma.h"
 #include "i2c.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -48,6 +49,17 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+/*
+ * MAXIMUM AND MINIMUM SETTINGS FOR LOAD
+ */
+#define MAX_CC_VALUE			5.0			// 5A maximum current
+#define MIN_CC_VALUE			0.001		// 1mA minimum	current
+#define MAX_CV_VALUE			30			// 30V maximum voltage
+#define MIN_CV_VALUE			3			// 3V minimum voltage
+#define MAX_CR_VALUE			10			// 10Ohm maximum resistance
+#define MIN_CR_VALUE			0.1			// 100mOhm minimum resistance
+#define MAX_CP_VALUE			99.999		// 99.999W maximum power CP is limited to 99.999Watt
+#define MIN_CP_VALUE			1			// 1W minimum power
 
 /* USER CODE END PD */
 
@@ -94,19 +106,61 @@ ad5693_configuration_t ad5693 = {
 		.mode 		= normal_mode,
 };
 
+// Define menu states
+typedef enum {
+	HOME_SCREEN, MODE_SELECTION, PARAMETER_SETTING, RETURN_TO_HOME
+} Menu_State_e;
+
+typedef struct {
+	float voltage;
+	float current;
+	float power;
+	float resistance;
+} Param_Mode_t;
+
+// Define global variables
+Menu_State_e current_state = HOME_SCREEN;
+Param_Mode_t param_mode = { 0.0 };
+
+int cursor_position = 0;
+int mode_index = -1;  // Store the index of mode setting
+int mode_index_last = -1;
+int last_cursor_position = -1;
+
+float param_value = 00.0, param_value_limit = 0.0;
+uint8_t digit_position = 0;
+int last_rot_cnt = 0;
+uint16_t sw_a_cnt = 0, sw_b_cnt = 0, sw_c_cnt = 0;
+bool sw_rot_state = false,
+		sw_a_state = false,
+		sw_b_state = false,
+		sw_c_state = false;
+bool adjusting_digit = false; // Flag to check if adjusting digit
+volatile uint8_t digit_value = 0;
+bool output_on_flag = false;
+bool force_update;
+
+uint16_t new_rot_pos, new_a_cnt ,new_b_cnt;
+static uint16_t old_a_cnt = 0, old_b_cnt = 0, old_rot_pos = 0;
 
 
-/*
- * MAXIMUM AND MINIMUM SETTINGS FOR LOAD
- */
-#define MAX_CC_VALUE			5.0			// 5A maximum current
-#define MIN_CC_VALUE			0.001		// 1mA minimum	current
-#define MAX_CV_VALUE			30			// 30V maximum voltage
-#define MIN_CV_VALUE			3			// 3V minimum voltage
-#define MAX_CR_VALUE			10			// 10Ohm maximum resistance
-#define MIN_CR_VALUE			0.1			// 100mOhm minimum resistance
-#define MAX_CP_VALUE			99.999		// 99.999W maximum power CP is limited to 99.999Watt
-#define MIN_CP_VALUE			1			// 1W minimum power
+// 'ON', 140x81px
+const unsigned char ON_BITMAP[] = { 0xff, 0xff, 0xff, 0xf8, 0xff, 0xff, 0xff,
+		0xf8, 0xf8, 0x1f, 0x1f, 0x38, 0xf0, 0x0f, 0x0f, 0x38, 0xe1, 0xc7, 0x07,
+		0x38, 0xe7, 0xe7, 0x07, 0x38, 0xc7, 0xe3, 0x03, 0x38, 0xc7, 0xe3, 0x23,
+		0x38, 0xc7, 0xe3, 0x31, 0x38, 0xc7, 0xe3, 0x31, 0x38, 0xc7, 0xe3, 0x38,
+		0x38, 0xc7, 0xe7, 0x38, 0x38, 0xe3, 0xc7, 0x3c, 0x38, 0xe0, 0x0f, 0x3e,
+		0x38, 0xf8, 0x1f, 0x3e, 0x38, 0xff, 0xff, 0xff, 0xf8, 0xff, 0xff, 0xff,
+		0xf8 };
+
+// 'OFF', 29x16px
+const unsigned char OFF_BITMAP[] = { 0xff, 0xff, 0xff, 0xf8, 0xff, 0xff, 0xff,
+		0xf8, 0xe0, 0x78, 0x08, 0x08, 0xc0, 0x38, 0x08, 0x08, 0x87, 0x18, 0xf8,
+		0xf8, 0x8f, 0x18, 0xf8, 0xf8, 0x8f, 0x88, 0xf8, 0xf8, 0x8f, 0x88, 0x18,
+		0x18, 0x8f, 0x88, 0x18, 0x18, 0x8f, 0x98, 0xf8, 0xf8, 0x8f, 0x18, 0xf8,
+		0xf8, 0x80, 0x18, 0xf8, 0xf8, 0xc0, 0x38, 0xf8, 0xf8, 0xf0, 0xf9, 0xfd,
+		0xf8, 0xff, 0xff, 0xff, 0xf8, 0xff, 0xff, 0xff, 0xf8 };
+
 
 /* USER CODE END PV */
 
@@ -118,6 +172,19 @@ void myOLED_float(uint16_t cursorX, uint16_t cursorY, float data);
 void myOLED_int(uint16_t cursorX, uint16_t cursorY, uint16_t data);
 void myOLED_int8(uint16_t cursorX, uint16_t cursorY, uint8_t data);
 uint32_t Filter_Outliers(uint32_t* data, uint16_t length);
+
+// Function Prototypes
+void display_home_screen(bool force_update);
+void display_mode_selection(bool force_update);
+void display_parameter_setting(bool force_update);
+void update_encoder_state();
+void handle_button_press();
+void update_display();
+void update_digit_value(int direction);
+void update_parameter_value(int direction); // function to update parameter value
+void put_parameter_limit(void);				// put limit on parameter values
+
+
 
 typedef enum
 {
@@ -182,7 +249,10 @@ int main(void)
   MX_I2C1_Init();
   MX_ADC1_Init();
   MX_USART2_UART_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+  HAL_TIM_Encoder_Start_IT(&htim3, TIM_CHANNEL_ALL);
+
   ssd1306_Init();
   HAL_ADCEx_Calibration_Start(&hadc1);
   HAL_Delay(100);
@@ -402,49 +472,6 @@ void myOLED_int8(uint16_t cursorX, uint16_t cursorY, uint8_t data){
 }
 
 
-uint32_t Filter_Outliers(uint32_t* data, uint16_t length) {
-    uint32_t sum = 0;
-    uint32_t max_value = 0;
-    uint32_t min_value = UINT32_MAX;
-
-    // Calculate the sum, max, and min of the data
-    for (uint16_t i = 0; i < length; i++) {
-        sum += data[i];
-        if (data[i] > max_value) {
-            max_value = data[i];
-        }
-        if (data[i] < min_value) {
-            min_value = data[i];
-        }
-    }
-
-    // Calculate the mean without floating-point math
-    uint32_t mean = sum / length;
-
-    // Calculate the standard deviation without floating-point math
-    uint32_t variance = 0;
-    for (uint16_t i = 0; i < length; i++) {
-        int32_t diff = (int32_t)data[i] - (int32_t)mean;
-        variance += diff * diff;
-    }
-    variance /= length;
-    uint32_t std_dev = (uint32_t)sqrt((double)variance);
-
-    // Filter out outliers
-    uint32_t filtered_value = 0;
-    uint16_t outlier_count = 0;
-    for (uint16_t i = 0; i < length; i++) {
-        if (data[i] > THRESHOLD || abs((int32_t)data[i] - (int32_t)mean) > STD_THRESHOLD * (int32_t)std_dev) {
-            filtered_value += mean;
-            outlier_count++;
-        } else {
-            filtered_value += data[i];
-        }
-    }
-
-    // Return the filtered value, or the original value if no outliers were detected
-    return outlier_count > 0 ? filtered_value / (length - outlier_count) : LTC2959_Get_Current();
-}
 /* USER CODE END 4 */
 
 /**
