@@ -32,7 +32,7 @@
 #include "../../ssd1306_oled_lib/inc/ssd1306.h"
 #include "../../ssd1306_oled_lib/inc/ssd1306_tests.h"
 //#include "../../ltc2944/ltc2944.h"
-#include "../../ltc4151/ltc4151.h"
+//#include "../../ltc4151/ltc4151.h"
 #include "../../mcp4725/mcp4725.h"
 #include "../../pid/pid.h"
 #include "../../ltc2959/ltc2959.h"
@@ -61,6 +61,9 @@
 #define MAX_CP_VALUE			99.999		// 99.999W maximum power CP is limited to 99.999Watt
 #define MIN_CP_VALUE			1			// 1W minimum power
 
+#define MAX_DIGITS 				5
+
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -75,9 +78,9 @@ uint32_t tick, prev_tick = 0;
 uint16_t blink_delay = 50;
 char stringValue[8];  // Adjust the buffer size as needed
 int32_t curr, current = 0, filter_current = 0;
-LTC4151_t LTC4151;
 uint16_t sense_resistor = 5;		//8 milli-ohms
 uint32_t voltage = 0, charge = 0;
+int16_t temperature = 0;
 uint8_t i, ret, i2c_add;
 uint32_t desired_value, measured_value = 0;
 MCP4725 myMCP4725;
@@ -108,7 +111,10 @@ ad5693_configuration_t ad5693 = {
 
 // Define menu states
 typedef enum {
-	HOME_SCREEN, MODE_SELECTION, PARAMETER_SETTING, RETURN_TO_HOME
+	HOME_SCREEN,
+	MODE_SELECTION,
+	PARAMETER_SETTING,
+	RETURN_TO_HOME
 } Menu_State_e;
 
 typedef struct {
@@ -118,9 +124,11 @@ typedef struct {
 	float resistance;
 } Param_Mode_t;
 
-// Define global variables
+
 Menu_State_e current_state = HOME_SCREEN;
 Param_Mode_t param_mode = { 0.0 };
+
+uint32_t rotary_out, rot_pos, rot_cnt, rot_prev_pos = 0;
 
 int cursor_position = 0;
 int mode_index = -1;  // Store the index of mode setting
@@ -259,7 +267,7 @@ int main(void)
   HAL_ADC_Start(&hadc1);
 
   printf("LTC2959 Begin\n\r");
-  while(HAL_I2C_IsDeviceReady(&LTC2959_I2C_PORT, LTC2959_I2C_ADDR, 100, 1000) != HAL_OK);	// wait for it to come alive
+//  while(HAL_I2C_IsDeviceReady(&LTC2959_I2C_PORT, LTC2959_I2C_ADDR, 100, 1000) != HAL_OK);	// wait for it to come alive
   LTC2959_Init(&ltc2959);
   HAL_Delay(1000);
 
@@ -269,12 +277,10 @@ int main(void)
   HAL_Delay(10);
 
 
-
-
-  myOLED_char(1, 12, "Volt = ");
-  myOLED_char(1, 24, "Curr = ");
-  myOLED_char(1, 36, "Chg  = ");
-  myOLED_char(1, 48, "Temp = ");
+//  myOLED_char(1, 12, "Volt = ");
+//  myOLED_char(1, 24, "Curr = ");
+//  myOLED_char(1, 36, "Chg  = ");
+//  myOLED_char(1, 48, "Temp = ");
   ssd1306_UpdateScreen();
   HAL_Delay(100);
 
@@ -299,6 +305,10 @@ int main(void)
   while (1)
   {
 	  tick = HAL_GetTick();
+
+	  update_encoder_state();
+	  handle_button_press();
+	  update_display();
 //	  myOLED_int(1, 2, tick);
     /* USER CODE END WHILE */
 
@@ -311,74 +321,66 @@ int main(void)
   	  }
 
 
-//      for (uint8_t i = 0; i < 10; i++) {
-//          sensor_data[i] = LTC2959_Get_Current();
-//      }
+      for (uint8_t i = 0; i < 10; i++) {
+          sensor_data[i] = LTC2959_Get_Current();
+      }
 
-//	  current = LTC2959_Get_Current();
-//  	  filter_current = Get_Current_Filtered(current);
+	  current = LTC2959_Get_Current();
+  	  filter_current = Get_Current_Filtered(current);
 
+/*
       if(tick - prev_control_delay >= control_delay){
 		  voltage = LTC2959_Get_Voltage();
 		  current = LTC2959_Get_Current();
 		  charge = LTC2959_Get_Acc_Charge();
-//		  control_volt = Control_DAC_Output(500, current, battery_detect);
+		  control_volt = Control_DAC_Output(500, current, battery_detect);
 		  AD5693_Set_Voltage_Raw(control_volt);
 		  prev_control_delay = tick;
 	  }
+*/
 
 
+	  switch(state){
+	  case IDLE:
+		  if(battery_detect){
+			  state = BATT_CONN;
+		  }else{
+			  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, RESET);
+			  myOLED_char(50, 24, "        ");	// print empty spaces in curr
+			  myOLED_char(50, 36, "       ");	// print empty spaces in chg
+			  myOLED_char(50, 48, "  ");		// print empty spaces in temp
+			  myOLED_int(50, 2, 0);
+			  // Resets the seconds count every time battery is removed
+			  if(seconds > 1){
+				  seconds = 0;
+			  }
+		  }
+		  break;
 
-	  if(tick - prev_print_delay >= print_delay){
-//		  printf("LTC2959_Voltage = %.4f\n\r", voltage);
-//		  printf("LTC2959_current = %ld, Filter_current = %ld\n\r\v", current, filter_current);
-//		  printf("%ld, %ld, %ld \n\r", voltage, current, filter_current);
-//		  printf("LTC2959_charge = %.4f\n\r\v", charge);
-		  printf("LTC2959_current = %ld\n\r", current);
-		  prev_print_delay = tick;
-	  }
+	  case BATT_CONN:
+		  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, SET); 		// Turn on RED led for indication
+		  state = RUN;
+		  break;
 
-//	  switch(state){
-//	  case IDLE:
-//		  if(battery_detect){
-//			  state = BATT_CONN;
-//		  }else{
-//			  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, RESET);
-//			  myOLED_char(50, 24, "        ");	// print empty spaces in curr
-//			  myOLED_char(50, 36, "       ");	// print empty spaces in chg
-//			  myOLED_char(50, 48, "  ");		// print empty spaces in temp
-//			  myOLED_int(50, 2, 0);
-//			  // Resets the seconds count every time battery is removed
-//			  if(seconds > 1){
-//				  seconds = 0;
+	  case RUN:
+		  /*
+		  * test timer for run condition
+		  */
+		  if(tick - sec_prev >= 1000){		// 1000ms = 1 sec
+			  sec_prev = tick;
+			  myOLED_int(50, 2, seconds++);
+		  }
+		  if(battery_detect){
+			  // print the battery values on oled screen
+				  break;
 //			  }
-//		  }
-//		  break;
-//
-//	  case BATT_CONN:
-//		  HAL_GPIO_WritePin(LED_RED_GPIO_Port, LED_RED_Pin, SET); 		// Turn on RED led for indication
-//		  state = RUN;
-//		  break;
-//
-//	  case RUN:
-//		  /*
-//		  * test timer for run condition
-//		  */
-//		  if(tick - sec_prev >= 1000){		// 1000ms = 1 sec
-//			  sec_prev = tick;
-//			  myOLED_int(50, 2, seconds++);
-//		  }
-//		  if(battery_detect){
-//			  // print the battery values on oled screen
-//				  break;
-////			  }
-//		  }else{
-//			  state = IDLE;
-//		  }
-//		  break;
-//
-//	  default:
-//	  }
+		  }else{
+			  state = IDLE;
+		  }
+		  break;
+
+	  default:
+	  }
 
 	  if(tick - prev_tick >= blink_delay){
 		  prev_tick = tick;
@@ -441,10 +443,43 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-void myOLED_char(uint16_t cursorX, uint16_t cursorY, char* data){
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim){
+	rotary_out = __HAL_TIM_GET_COUNTER(htim);
+	rot_cnt = rotary_out / 4;
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+	switch(GPIO_Pin){
+	case ROT_SW_Pin:
+		sw_rot_state = true;
+		break;
+	case A_SW_Pin:
+		sw_a_state = true;
+		sw_a_cnt++;
+		break;
+	case B_SW_Pin:
+		sw_b_state = true;
+		sw_b_cnt++;
+		break;
+	case C_SW_Pin:
+		sw_c_state = true;
+		sw_c_cnt++;
+		break;
+	default:
+		break;
+	}
+}
+
+void myOLED_char(uint16_t cursorX, uint16_t cursorY, char *data){
 
 	ssd1306_SetCursor(cursorX, cursorY);
 	ssd1306_WriteString(data, Font_7x10, White);
+}
+
+void myOLED_char_big(uint16_t cursorX, uint16_t cursorY, char *data){
+
+	ssd1306_SetCursor(cursorX, cursorY);
+	ssd1306_WriteString(data, Font_11x18, White);
 }
 
 void myOLED_float(uint16_t cursorX, uint16_t cursorY, float data){
@@ -453,6 +488,14 @@ void myOLED_float(uint16_t cursorX, uint16_t cursorY, float data){
 	sprintf(str_data, "%.3f", data);
 	ssd1306_SetCursor(cursorX, cursorY);
 	ssd1306_WriteString(str_data, Font_7x10, White);
+}
+
+void myOLED_float_big(uint16_t cursorX, uint16_t cursorY, float data){
+	char str_data[10];
+
+	sprintf(str_data, "%.3f", data);
+	ssd1306_SetCursor(cursorX, cursorY);
+	ssd1306_WriteString(str_data, Font_11x18, White);
 }
 
 void myOLED_int(uint16_t cursorX, uint16_t cursorY, uint16_t data){
@@ -471,6 +514,403 @@ void myOLED_int8(uint16_t cursorX, uint16_t cursorY, uint8_t data){
 	ssd1306_WriteString(str_data, Font_7x10, White);
 }
 
+
+// Update Display
+void update_display(){
+	static Menu_State_e last_state = HOME_SCREEN;
+	static bool first_update = true;
+	force_update = (current_state != last_state) || first_update || !output_on_flag;
+
+	if(force_update){
+		last_state = current_state;
+		last_cursor_position = -1; // Force full update on state change
+		first_update = false;
+	}
+
+	// Handle cursor position updates separately
+	bool cursor_changed = (cursor_position != last_cursor_position);
+
+	switch(current_state){
+	case HOME_SCREEN:
+		display_home_screen(force_update || cursor_changed);
+		break;
+	case MODE_SELECTION:
+		display_mode_selection(force_update || cursor_changed);
+		break;
+	case PARAMETER_SETTING:
+		display_parameter_setting(force_update || cursor_changed);
+		break;
+	case RETURN_TO_HOME:
+		current_state = HOME_SCREEN;
+		break;
+	default:
+		break;
+	}
+	last_cursor_position = cursor_position;
+}
+
+// Display Home Screen
+void display_home_screen(bool force_update){
+	if(force_update || output_on_flag){
+		ssd1306_Fill(Black);			// Clear the display before printing
+		myOLED_char_big(0, 0, "V:");
+		myOLED_float_big(21, 0, voltage);
+		myOLED_char_big(0, 18, "C:");
+		myOLED_float_big(21, 18, curr);
+		myOLED_char_big(0, 36, "Q:");
+		myOLED_float_big(21, 36, charge);
+		myOLED_char(0, 54, "t:");
+		myOLED_int(15, 54, temperature);
+		ssd1306_Line(78, 0, 78, 50, White);	// Draw line to separate the values and options
+		myOLED_char(90, 0, "<SET>");			// SET MODE
+		myOLED_char(90, 10, "<ON>");			// Turn ON LOAD
+		myOLED_char(90, 20, "<RST>");			// Reset the LOAD
+
+		// Show ON or OFF bitmap on display for LOAD status
+		if(output_on_flag){
+//			output_on_flag = false;									// Change the flag state
+			myOLED_char(90, 10, "<OFF>");							// Print OFF in ON position if button is pressed
+			ssd1306_DrawBitmap(90, 31, ON_BITMAP, 29, 16, White);	//	Draw ON bitmap
+		}else{
+			ssd1306_DrawBitmap(90, 31, OFF_BITMAP, 29, 16, White);	// Draw OFF bitmap
+		}
+	}
+
+	// Update cursor only
+	uint8_t scroll_num = 3;
+	for(int i = 0; i < scroll_num; i++){
+		if(i == cursor_position){
+			myOLED_char(82, i * 10, ">");
+		}else{
+			myOLED_char(82, i * 10, " ");
+		}
+	}
+
+	// Display the param value and mode if it is set
+	if(current_state == 0){
+		uint8_t x_mode = 50;
+		uint8_t y_mode = 54;
+		uint8_t x_val = 80;
+		uint8_t y_val = 54;
+
+		ssd1306_Line(45, y_mode, 45, 64, White);		// Draw line
+		switch(mode_index){
+		case 0:
+			myOLED_char(x_mode, y_mode, "CC:");
+			myOLED_float(x_val, y_val, param_mode.current);
+			break;
+		case 1:
+			myOLED_char(x_mode, y_mode, "CV:");
+			myOLED_float(x_val, y_val, param_mode.voltage);
+			break;
+		case 2:
+			myOLED_char(x_mode, y_mode, "CP:");
+			myOLED_float(x_val, y_val, param_mode.power);
+			break;
+		case 3:
+			myOLED_char(x_mode, y_mode, "CR:");
+			myOLED_float(x_val, y_val, param_mode.resistance);
+			break;
+		default:
+			break;
+		}
+	}
+
+	ssd1306_UpdateScreen();
+}
+
+// Display Mode Selection Screen
+void display_mode_selection(bool force_update){
+	const char *modes[] = { "CC", "CV", "CP", "CR" };
+	if(force_update){
+		ssd1306_Fill(Black); // Clear the screen
+		for(int i = 0; i < 4; i++){
+			myOLED_char(15, i * 10, (char*) modes[i]); // Print modes in column
+		}
+	}
+
+	// Update cursor only
+	uint8_t num_of_modes = 4;
+	for(int i = 0; i < num_of_modes; i++){
+		if(i == cursor_position){
+			myOLED_char(0, i * 10, "->");
+		}else{
+			myOLED_char(0, i * 10, "  ");
+		}
+	}
+
+	myOLED_char(5, 50, "<SELECT THE MODE>");
+	ssd1306_UpdateScreen();
+}
+
+void display_parameter_setting(bool force_update){
+	if(force_update){
+		// Redraw entire screen if forced
+		ssd1306_Fill(Black);
+		myOLED_char(0, 0, "Set Value:");
+
+		// Check the state and print the mode in parameter setting screen
+		if(current_state == 2){
+			myOLED_char(0, 42, "MIN:");
+			myOLED_char(0, 52, "MAX:");
+			switch(mode_index){
+			case 0:
+				myOLED_char(70, 0, "CC");
+				myOLED_char(70, 20, "Amp");
+				myOLED_float(35, 42, (float)MIN_CC_VALUE);
+				myOLED_float(35, 52, (float)MAX_CC_VALUE);
+				break;
+			case 1:
+				myOLED_char(70, 0, "CV");
+				myOLED_char(70, 20, "Volt");
+				myOLED_float(35, 42, (float)MIN_CV_VALUE);
+				myOLED_float(35, 52, (float)MAX_CV_VALUE);
+				break;
+			case 2:
+				myOLED_char(70, 0, "CP");
+				myOLED_char(70, 20, "Watt");
+				myOLED_float(35, 42, (float)MIN_CP_VALUE);
+				myOLED_float(35, 52, (float)MAX_CP_VALUE);
+				break;
+			case 3:
+				myOLED_char(70, 0, "CR");
+				myOLED_char(70, 20, "Ohm");
+				myOLED_float(35, 42, (float)MIN_CR_VALUE);
+				myOLED_float(35, 52, (float)MAX_CR_VALUE);
+				break;
+			default:
+				break;
+			}
+		}
+	}
+
+	// Fetch the current mode's parameter value
+	float display_value;
+
+	switch(mode_index){
+	case 0:
+		display_value = param_mode.current;
+		break;
+	case 1:
+		display_value = param_mode.voltage;
+		break;
+	case 2:
+		display_value = param_mode.power;
+		break;
+	case 3:
+		display_value = param_mode.resistance;
+		break;
+	default:
+		display_value = 0.0f;
+		break;
+	}
+
+	// Display the value with proper formatting
+	if(display_value >= 10.000){
+		myOLED_float(0, 20, display_value);
+	}else{
+		myOLED_float(7, 20, display_value);
+		myOLED_int(0, 20, 0);  // Print "0" at the first location
+	}
+
+	// Clear previous cursor position by redrawing the entire line
+	myOLED_char(0, 30, "         ");
+	// Draw cursor under the digit
+	uint8_t cursor_x;
+	cursor_x = digit_position * 7;		// 7 pixels width per character
+	myOLED_char(cursor_x, 30, "^");  	// Draw the cursor
+
+	// Refresh the display after updating
+	ssd1306_UpdateScreen();
+}
+
+// Update Encoder State
+void update_encoder_state(){
+	new_rot_pos = rot_cnt;
+
+	if(new_rot_pos > old_rot_pos){
+		if(current_state == PARAMETER_SETTING){
+			if(adjusting_digit){
+				update_parameter_value(1); // Increment digit
+			}
+		}else{
+			cursor_position++;
+		}
+	}else if(new_rot_pos < old_rot_pos){
+		if(current_state == PARAMETER_SETTING){
+			if(adjusting_digit){
+				update_parameter_value(-1); // Decrement digit
+			}
+		}else{
+			cursor_position--;
+		}
+	}
+	old_rot_pos = new_rot_pos;
+	put_parameter_limit();		// put limit on parameter values based on mode
+
+	// putting limits
+	if(cursor_position < 0)
+		cursor_position = 0;
+	if(current_state == HOME_SCREEN && cursor_position > 2)
+		cursor_position = 2;
+	if(current_state == MODE_SELECTION && cursor_position > 3)
+		cursor_position = 3;
+	if(current_state == PARAMETER_SETTING && digit_position > MAX_DIGITS)
+		digit_position = MAX_DIGITS;
+//	if(digit_position < 0)
+//		digit_position = 0;
+}
+
+
+// Update parameter value
+void update_parameter_value(int direction) {
+    // Convert the whole value to an integer, treating it as 00.000
+    int full_value = (int)(param_value * 1000);
+
+    // Extract individual digits
+    int digits[5]; // Will store: [tens, ones, tenths, hundredths, thousandths]
+    digits[0] = (full_value / 10000) % 10;     // tens
+    digits[1] = (full_value / 1000) % 10;      // ones
+    digits[2] = (full_value / 100) % 10;       // tenths
+    digits[3] = (full_value / 10) % 10;        // hundredths
+    digits[4] = full_value % 10;               // thousandths
+
+    // Skip if we're at the decimal point position
+    if (digit_position == 2) {
+        return;
+    }
+
+    // Map cursor position to array index
+    int digit_index = (digit_position < 2) ? digit_position : digit_position - 1;
+
+    // Update only the selected digit
+    digits[digit_index] = digits[digit_index] + direction;
+
+    // Handle wrapping for the specific digit
+    if (digits[digit_index] > 9) {
+        digits[digit_index] = 0;
+    } else if (digits[digit_index] < 0) {
+        digits[digit_index] = 9;
+    }
+
+    // Reconstruct the value
+    full_value = digits[0] * 10000 +
+                 digits[1] * 1000 +
+                 digits[2] * 100 +
+                 digits[3] * 10 +
+                 digits[4];
+
+    // Convert back to floating-point
+    param_value = full_value / 1000.0;
+}
+
+
+// Put limit on parameter value
+void put_parameter_limit(){
+	// RESET the param_value if mode is changed
+	if(mode_index_last != mode_index){
+		param_value = 0.0;
+		mode_index_last = mode_index;
+	}
+
+	// check the MIN and MAX value of each mode to set limits on the value.
+	if(current_state == 2){
+		switch(mode_index){
+		case 0:
+			if(param_value >= MAX_CC_VALUE){
+				param_value = MAX_CC_VALUE;
+			}else if(param_value <= MIN_CC_VALUE){
+				param_value = MIN_CC_VALUE;
+			}
+			param_mode.current = param_value;
+			break;
+		case 1:
+			if(param_value >= MAX_CV_VALUE){
+				param_value = MAX_CV_VALUE;
+			}else if(param_value <= MIN_CV_VALUE){
+				param_value = MIN_CV_VALUE;
+			}
+			param_mode.voltage = param_value;
+			break;
+		case 2:
+			if(param_value >= MAX_CP_VALUE){
+				param_value = MAX_CP_VALUE;
+			}else if(param_value <= MIN_CP_VALUE){
+				param_value = MIN_CP_VALUE;
+			}
+			param_mode.power = param_value;
+			break;
+		case 3:
+			if(param_value >= MAX_CR_VALUE){
+				param_value = MAX_CR_VALUE;
+			}else if(param_value <= MIN_CR_VALUE){
+				param_value = MIN_CR_VALUE;
+			}
+			param_mode.resistance = param_value;
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+void handle_button_press(){
+	new_a_cnt = sw_a_cnt;
+	new_b_cnt = sw_b_cnt;
+
+	if(sw_rot_state){
+		switch(current_state){
+		case HOME_SCREEN:
+			if(cursor_position == 0){
+				current_state = MODE_SELECTION;		// GoTo MODE SELECTION PAGE
+				output_on_flag = false;				// turn off when page is changed
+			}else if(cursor_position == 1 && (!output_on_flag)){
+				output_on_flag = true;
+				// Handle "TURN ON" functionality
+			}else if(cursor_position == 1 && output_on_flag){
+				output_on_flag = false;
+				force_update = true;
+				// Handle "TURN ON" functionality
+			}else if(cursor_position == 2){			// Reset everything
+				current_state = HOME_SCREEN;// not necessary to reset current_state
+				cursor_position = 0;
+				mode_index = -1;
+				param_value = 0.0;
+				output_on_flag = false;
+			}
+			adjusting_digit = false;			// Disable adjusting in param setting
+			break;
+		case MODE_SELECTION:
+			current_state = PARAMETER_SETTING;			// go to next state
+			mode_index = cursor_position;
+			cursor_position = 0;
+			digit_position = 0;
+			adjusting_digit = false;
+			break;
+		case PARAMETER_SETTING:
+			if(sw_rot_state){// Return to home by saving param value
+			current_state = RETURN_TO_HOME;
+			digit_position = 0;
+			}
+			break;
+		default:
+			break;
+		}
+		sw_rot_state = false; // Reset button state
+	}
+
+	if(current_state == PARAMETER_SETTING) {
+		adjusting_digit = true;
+	}else adjusting_digit = false;
+
+	if(new_b_cnt > old_b_cnt){
+		digit_position++;
+	}else if(new_a_cnt > old_a_cnt) {
+		digit_position--;
+	}
+	old_b_cnt = new_b_cnt;
+	old_a_cnt = new_a_cnt;
+}
 
 /* USER CODE END 4 */
 
